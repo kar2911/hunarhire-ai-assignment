@@ -1,8 +1,14 @@
+import base64
+import hashlib
+import hmac
+import json
+import time
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from app.config import HUNAR_WEBHOOK_API_KEYS
 from app.database import get_db
 from app.models import Interview
 
@@ -13,7 +19,73 @@ router = APIRouter(
 )
 
 
-def to_float(value):
+MAX_WEBHOOK_AGE_SECONDS = 300
+
+
+def verify_hunar_signature(
+    body: bytes,
+    timestamp: str,
+    signature_header: str,
+    api_keys: list[str],
+) -> bool:
+    """
+    Verify Hunar webhook signature.
+
+    Hunar signs:
+        timestamp + "." + raw_request_body
+
+    using HMAC-SHA256 with the API key.
+    """
+
+    if not timestamp or not signature_header:
+        return False
+
+    try:
+        timestamp_int = int(timestamp)
+    except ValueError:
+        return False
+
+    # Reject stale/future requests
+    current_time = int(time.time())
+
+    if abs(current_time - timestamp_int) > MAX_WEBHOOK_AGE_SECONDS:
+        return False
+
+    signed_payload = (
+        timestamp.encode("utf-8")
+        + b"."
+        + body
+    )
+
+    # Hunar may provide multiple signatures separated by commas.
+    provided_signatures = [
+        value.strip()
+        for value in signature_header.split(",")
+        if value.strip()
+    ]
+
+    for api_key in api_keys:
+        expected_digest = hmac.new(
+            api_key.encode("utf-8"),
+            signed_payload,
+            hashlib.sha256,
+        ).digest()
+
+        expected_signature = base64.b64encode(
+            expected_digest
+        ).decode("utf-8")
+
+        for provided_signature in provided_signatures:
+            if hmac.compare_digest(
+                expected_signature,
+                provided_signature,
+            ):
+                return True
+
+    return False
+
+
+def to_float(value: Any) -> float | None:
     if value is None:
         return None
 
@@ -25,9 +97,40 @@ def to_float(value):
 
 @router.post("/hunar")
 async def hunar_webhook(
-    payload: dict[str, Any],
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    body = await request.body()
+
+    timestamp = request.headers.get(
+        "X-Hunar-Timestamp"
+    )
+
+    signature = request.headers.get(
+        "X-Hunar-Signature"
+    )
+
+    if not verify_hunar_signature(
+        body=body,
+        timestamp=timestamp or "",
+        signature_header=signature or "",
+        api_keys=HUNAR_WEBHOOK_API_KEYS,
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid webhook signature",
+        )
+
+    try:
+        payload = json.loads(
+            body.decode("utf-8")
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON payload",
+        )
+
     event_type = payload.get("event_type")
     call_id = payload.get("call_id")
 
@@ -36,14 +139,12 @@ async def hunar_webhook(
     print("Call ID:", call_id)
     print("===================================\n")
 
-    # We need the call ID to find the interview
     if not call_id:
         return {
             "ok": True,
             "message": "Webhook received without call_id",
         }
 
-    # Find the interview created by /api/interviews/start
     interview = (
         db.query(Interview)
         .filter(Interview.call_id == call_id)
@@ -51,23 +152,30 @@ async def hunar_webhook(
     )
 
     if not interview:
-        print(
-            f"Interview not found for call_id: {call_id}"
-        )
-
         return {
             "ok": True,
             "message": "Interview not found",
         }
 
-    # Update interview status
+    # Idempotency:
+    # If the same terminal event is delivered again,
+    # simply acknowledge it without reprocessing.
+    if (
+        interview.status == "COMPLETED"
+        and payload.get("status") == "COMPLETED"
+    ):
+        return {
+            "ok": True,
+            "message": "Webhook already processed",
+            "interview_id": interview.id,
+            "call_id": interview.call_id,
+        }
+
     if payload.get("status"):
         interview.status = payload["status"]
 
-    # Extract Hunar structured result
     result = payload.get("result") or {}
 
-    # Scores
     interview.overall_score = to_float(
         result.get("overall_score")
     )
@@ -92,7 +200,6 @@ async def hunar_webhook(
         result.get("role_fit_score")
     )
 
-    # Hiring decision
     interview.recommendation = result.get(
         "recommendation"
     )
@@ -101,7 +208,6 @@ async def hunar_webhook(
         "interest_level"
     )
 
-    # Candidate analysis
     interview.summary = result.get(
         "candidate_summary"
     )
@@ -122,7 +228,6 @@ async def hunar_webhook(
         "conversation_transcript"
     )
 
-    # Call metadata
     interview.recording_url = payload.get(
         "recording_url"
     )
@@ -131,7 +236,6 @@ async def hunar_webhook(
         payload.get("duration_seconds")
     )
 
-    # Save everything
     db.commit()
     db.refresh(interview)
 
