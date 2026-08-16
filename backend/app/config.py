@@ -38,3 +38,23 @@ if not HUNAR_WEBHOOK_API_KEYS:
     raise ValueError(
         "HUNAR_WEBHOOK_API_KEYS is not configured"
     )
+
+# Assignment 2 — Outreach (optional; does not affect hiring Voice AI)
+HUNAR_OUTREACH_AGENT_ID = os.getenv(
+    "HUNAR_OUTREACH_AGENT_ID"
+)
+
+HUNAR_OUTREACH_WEBHOOK_URL = os.getenv(
+    "HUNAR_OUTREACH_WEBHOOK_URL"
+)
+
+# Assignment 2 — People Search (optional; does not affect hiring Voice AI)
+PEOPLE_PROVIDER = os.getenv(
+    "PEOPLE_PROVIDER",
+    "mock",
+)
+
+PDL_API_KEY = os.getenv("PDL_API_KEY")
+APOLLO_API_KEY = os.getenv("APOLLO_API_KEY")
+CORESIGNAL_API_KEY = os.getenv("CORESIGNAL_API_KEY")
+SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")

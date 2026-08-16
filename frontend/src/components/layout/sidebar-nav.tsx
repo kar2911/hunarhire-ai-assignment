@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation"
 import {
   BriefcaseBusiness,
   LayoutDashboard,
+  Search,
   Settings,
   Users,
   Video,
@@ -23,6 +24,11 @@ const navigation = [
     label: "Candidates",
     href: "/candidates",
     icon: Users,
+  },
+  {
+    label: "People Search",
+    href: "/search",
+    icon: Search,
   },
   {
     label: "Interviews",

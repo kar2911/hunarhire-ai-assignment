@@ -1,0 +1,35 @@
+[
+  {
+    "id": "demo-001",
+    "name": "Replace with candidate name",
+    "headline": "Replace with public headline",
+    "current_title": "Replace with current title",
+    "company": "Replace with company",
+    "location": "Replace with location",
+    "linkedin_url": null,
+    "email": null,
+    "public_phone": null,
+    "phone_source": null,
+    "skills": ["ReplaceMe"],
+    "summary": "Paste a short public summary. Leave email and public_phone null unless you have permission to use them.",
+    "experience": [
+      {
+        "title": "Replace with title",
+        "company": "Replace with company",
+        "location": null,
+        "start_date": "2022",
+        "end_date": "Present",
+        "description": null
+      }
+    ],
+    "education": [
+      {
+        "school": "Replace with institution",
+        "degree": "B.Tech",
+        "field": "Computer Science",
+        "start_date": "2014",
+        "end_date": "2018"
+      }
+    ]
+  }
+]
