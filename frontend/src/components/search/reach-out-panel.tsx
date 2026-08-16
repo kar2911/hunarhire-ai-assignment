@@ -9,6 +9,7 @@ import { formatDate } from "@/lib/format"
 import {
   getOutreach,
   isTerminalOutreachStatus,
+  listOutreach,
   startOutreach,
   type OutreachRecord,
 } from "@/lib/outreach-api"
@@ -62,12 +63,32 @@ function callHeadline(status: string, lifecycleStatus: string) {
   return "Call in progress"
 }
 
-function resultField(result: unknown, keys: string[]) {
-  if (!result || typeof result !== "object") {
+function parseOutreachResult(result: unknown): Record<string, unknown> | null {
+  if (!result) {
     return null
   }
 
-  const record = result as Record<string, unknown>
+  if (typeof result === "string") {
+    try {
+      return parseOutreachResult(JSON.parse(result))
+    } catch {
+      return null
+    }
+  }
+
+  if (typeof result === "object" && !Array.isArray(result)) {
+    return result as Record<string, unknown>
+  }
+
+  return null
+}
+
+function resultField(result: unknown, keys: string[]) {
+  const record = parseOutreachResult(result)
+
+  if (!record) {
+    return null
+  }
 
   for (const key of keys) {
     const value = record[key]
@@ -112,46 +133,118 @@ export function ReachOutPanel({
   )
 
   useEffect(() => {
+    let cancelled = false
+
+    setOutreach(null)
+
+    async function loadExistingOutreach() {
+      try {
+        const records = await listOutreach()
+
+        if (cancelled) {
+          return
+        }
+
+        const matches = records.filter(
+          (record) => record.person_id === personId,
+        )
+
+        if (matches.length === 0) {
+          return
+        }
+
+        matches.sort((left, right) => {
+          const leftTime = Date.parse(left.created_at) || 0
+          const rightTime = Date.parse(right.created_at) || 0
+
+          if (rightTime !== leftTime) {
+            return rightTime - leftTime
+          }
+
+          return right.id - left.id
+        })
+
+        setOutreach(matches[0])
+      } catch {
+        // Keep the existing UI if historical outreach cannot be loaded.
+      }
+    }
+
+    void loadExistingOutreach()
+
+    return () => {
+      cancelled = true
+    }
+  }, [personId])
+
+  useEffect(() => {
     if (outreachId === null) {
       return
     }
 
     let stopped = false
+    let intervalId: number | undefined
     pollCountRef.current = 0
+    const polledId = outreachId
 
-    const intervalId = window.setInterval(async () => {
+    async function refreshOutreach() {
+      if (stopped) {
+        return true
+      }
+
       pollCountRef.current += 1
 
       if (pollCountRef.current > MAX_POLLS) {
-        window.clearInterval(intervalId)
         setMessage(
           "Still waiting for call results. You can keep this page open or check again later.",
         )
-        return
+        return true
       }
 
       try {
-        const latest = await getOutreach(outreachId)
+        const latest = await getOutreach(polledId)
 
         if (stopped) {
-          return
+          return true
         }
 
         setOutreach(latest)
 
-        if (
-          isTerminalOutreachStatus(latest.status, latest.lifecycle_status)
-        ) {
+        return isTerminalOutreachStatus(
+          latest.status,
+          latest.lifecycle_status,
+        )
+      } catch {
+        return false
+      }
+    }
+
+    void (async () => {
+      const terminal = await refreshOutreach()
+
+      if (stopped || terminal) {
+        return
+      }
+
+      intervalId = window.setInterval(async () => {
+        const done = await refreshOutreach()
+
+        if (done && intervalId !== undefined) {
           window.clearInterval(intervalId)
         }
-      } catch {
-        // Keep the last known outreach state.
+      }, POLL_INTERVAL_MS)
+
+      if (stopped) {
+        window.clearInterval(intervalId)
       }
-    }, POLL_INTERVAL_MS)
+    })()
 
     return () => {
       stopped = true
-      window.clearInterval(intervalId)
+
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId)
+      }
     }
   }, [outreachId])
 

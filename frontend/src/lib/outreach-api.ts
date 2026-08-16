@@ -119,5 +119,11 @@ export async function listOutreach(): Promise<OutreachRecord[]> {
     throw new Error(await readError(response))
   }
 
-  return response.json()
+  const payload: unknown = await response.json()
+
+  if (!Array.isArray(payload)) {
+    return []
+  }
+
+  return payload as OutreachRecord[]
 }
